@@ -66,7 +66,6 @@ class ScreenCapture(object):
         :return: criteria_list[(criteria_name, criteria_value)]
         """
         pURI = self.BASE_URI + "processes/" + self.ARGS.processLimsId
-        # print pURI
         pXML = self.api.getResourceByURI(pURI)
         pDOM = parseString(pXML)
         UDF_fields = pDOM.getElementsByTagName("udf:field")
@@ -74,6 +73,7 @@ class ScreenCapture(object):
             criteria_name = UDF_DOM.attributes["name"].value
             criteria_value = UDF_DOM.firstChild.nodeValue
             self.criteria_list += [(criteria_name, criteria_value)]
+        print self.criteria_list
 
     def create_placeholder(self):
         xml = '<?xml version="1.0" encoding="UTF-8"?>'
@@ -82,11 +82,11 @@ class ScreenCapture(object):
         xml += '<original-location>' + self.local_path + '</original-location>'
         xml += '</file:file>'
 
-        res = api.createObject(xml, self.BASE_URI + "glsstorage")
+        res = self.api.createObject(xml, self.BASE_URI + "glsstorage")
         storeXML = parseString(res)
 
         contlocTag = storeXML.getElementsByTagName("content-location")
-        contloc = api.getInnerXml(contlocTag[0].toxml(), "content-location")
+        contloc = self.api.getInnerXml(contlocTag[0].toxml(), "content-location")
 
         return contloc
 
@@ -105,21 +105,22 @@ class ScreenCapture(object):
         remote_path = re.sub("sftp://.*?/", "/", remote_path)
         remote_dir = os.path.dirname(os.path.abspath(remote_path))
 
-        hostname = self.hostname.split("//")[1]
+        hostname = socket.gethostname() + ".gis.a-star.edu.sg"
         transport = paramiko.Transport((hostname, 22))
-        transport.connect(username=self.GLSRTP, password=self.GLSFTPPW)
+        transport.connect(username=self.GLSFTP, password=self.GLSFTPPW)
         sftp = paramiko.SFTPClient.from_transport(transport)
 
         if not self.exists(sftp, remote_dir):
             sftp.mkdir(remote_dir)
+        if not self.exists(sftp, remote_path):
             sftp.put(self.local_path, remote_path)
-            sftp.close()
-            transport.close()
+        sftp.close()
+        transport.close()
 
     def attach_file(self):
+        self.art_URI = self.BASE_URI + "artifacts/" + self.ARGS.fileID
         contloc = self.create_placeholder()
         self.setFile(contloc)
-        self.art_URI = self.BASE_URI + "artifacts/" + self.ARGS.fileID
 
         xml = '<?xml version="1.0" encoding="UTF-8"?>'
         xml += '<file:file xmlns:file="http://genologics.com/ri/file">'
@@ -128,7 +129,7 @@ class ScreenCapture(object):
         xml += '<original-location>' + self.local_path + '</original-location>'
         xml += '</file:file>'
 
-        response = api.createObject(xml, self.BASE_URI + "files")
+        response = self.api.createObject(xml, self.BASE_URI + "files")
         if not re.search("error", response.lower()):
             print "Attachment Done!"
         else:
