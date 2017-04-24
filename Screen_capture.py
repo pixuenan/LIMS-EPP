@@ -26,6 +26,7 @@ class ScreenCapture(object):
         self.api = None
         self.ARGS = None
         self.criteria_list = []
+        self.QC_list = []
         self.art_URI = None
         self.sftp = None
         self.output_filename = 'printScreen_OJT.csv'
@@ -54,26 +55,72 @@ class ScreenCapture(object):
         self.api.setVersion(self.VERSION)
         self.api.setup(self.ARGS.username, self.ARGS.password)
 
-    def write_csv(self, row_list):
+    def write_csv(self):
         with open(self.output_filename, 'wb') as csvfile:
             writer = csv.writer(csvfile, delimiter=',')
-            for row in row_list:
+            for row in zip(*self.criteria_list):
                 writer.writerow(row)
+            writer.writerow("\n")
+            # consider null sample info
+            # add all column name together as header
+            header = list(set([column_name for sample_dict in self.QC_list for column_name in sample_dict.keys()]))
+            writer.writerow(header)
+            for sample_dict in self.QC_list:
+                writer.writerow([sample_dict.get(name, "Null") for name in header])
 
-    def get_criteria(self):
+    def get_screen(self):
+        # get process xml
+        pURI = self.BASE_URI + "processes/" + self.ARGS.processLimsId
+        pDOM = self.get_dom(pURI)
+
+        self.criteria_list = self.get_UDF(pDOM, self.criteria_list)
+        self.get_sample_QC(pDOM)
+
+    def get_dom(self, uri):
+        xml = self.api.getResourceByURI(uri)
+        dom = parseString(xml)
+        return dom
+
+    @staticmethod
+    def get_UDF(DOM, target_list):
         """
         Get the UDF criteria fields
         :return: criteria_list[(criteria_name, criteria_value)]
         """
-        pURI = self.BASE_URI + "processes/" + self.ARGS.processLimsId
-        pXML = self.api.getResourceByURI(pURI)
-        pDOM = parseString(pXML)
-        UDF_fields = pDOM.getElementsByTagName("udf:field")
+        UDF_fields = DOM.getElementsByTagName("udf:field")
         for UDF_DOM in UDF_fields:
             criteria_name = UDF_DOM.attributes["name"].value
             criteria_value = UDF_DOM.firstChild.nodeValue
-            self.criteria_list += [(criteria_name, criteria_value)]
-        print self.criteria_list
+            target_list += [(criteria_name, criteria_value)]
+        return target_list
+
+    def get_sample_QC(self, pDOM):
+        """
+        Get the sample QC information
+        :return: QC_list[{QC_name: QC_value}]
+        """
+        # get the sample uri
+        artifacts_fields = pDOM.getElementsByTagName("input-output-map")
+        for artifact in artifacts_fields:
+            output_field = artifact.getElementsByTagName("output")[0]
+            if output_field.attributes["output-generation-type"].value == "PerInput":
+                sample_uri = output_field.attributes["uri"].value
+
+                # get the sample QC information
+                sample_dom = self.get_dom(sample_uri)
+                sample_name_uri = sample_dom.getElementsByTagName("sample")[0].attributes["uri"].value
+                sample_list = []
+                sample_list += [("Sample name", self.get_sample_name(sample_name_uri))]
+                sample_list = self.get_UDF(sample_dom, sample_list)
+                sample_QC_dict = {}
+                for sample_cell in sample_list:
+                    sample_QC_dict[sample_cell[0]] = sample_cell[1]
+                self.QC_list += [sample_QC_dict]
+
+    def get_sample_name(self, uri):
+        dom = self.get_dom(uri)
+        sample_name = dom.getElementsByTagName("name")[0].firstChild.nodeValue
+        return sample_name
 
     def create_placeholder(self):
         xml = '<?xml version="1.0" encoding="UTF-8"?>'
@@ -142,15 +189,11 @@ class ScreenCapture(object):
         self.set_BASEURI()
         self.get_arguments()
         self.create_api()
-        self.get_criteria()
-        self.write_csv(zip(*self.criteria_list))
+        self.get_screen()
+        self.write_csv()
         self.attach_file()
 
 if __name__=="__main__":
     test = ScreenCapture()
     test.main()
-
-
-
-
 
