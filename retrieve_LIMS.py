@@ -61,7 +61,7 @@ def get_sample_info(api, sample_sheet_uri):
     '''
     Get sample information from sample sheet uri.
     Form sample and family id as "external id_polaris id"
-    :return: dict {sample_id: (family_id, sample_uri)}
+    :return: dict {sample_id: (family_id, sample_uri, pedigree_path)}
     '''
     sample_sheet_dom = get_dom(api, sample_sheet_uri)
     sample_doms = sample_sheet_dom.getElementsByTagName("sample")
@@ -80,9 +80,11 @@ def get_sample_info(api, sample_sheet_uri):
                     external_family_id = udf_field.firstChild.nodeValue
                 elif udf_field.attributes["name"].value == "Polaris Family ID":
                     polaris_family_id = udf_field.firstChild.nodeValue
+                elif udf_field.attributes["name"].value == "Pedigree Path":
+                    pedigree_path = udf_field.firstChild.nodeValue
             sample_id = external_sample_id + "." + polaris_sample_id
             family_id = external_family_id + "." + polaris_family_id
-            sample_info_dict[sample_id] = (family_id, sample_uri)
+            sample_info_dict[sample_id] = (family_id, sample_uri, pedigree_path)
     return sample_info_dict
 
 

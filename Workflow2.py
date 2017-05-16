@@ -22,13 +22,13 @@ def read_config(config_json):
 def group_family(input_dict):
     '''
     Group sample by family ID
-    :param input_dict: sample info dictionary {(sample_id: (family_id, sample_uri)}
-    :return: family_dict: family info dictionary {family_id: [[sample_id_list], [sample_uri_list]]}
+    :param input_dict: sample info dictionary {(sample_id: (family_id, sample_uri, pedigree_path)}
+    :return: family_dict: family info dictionary {family_id: [[sample_id_list], [sample_uri_list], pedigree_path]}
     '''
     family_dict = dict()
-    for sample_id, (family_id, sample_uri) in input_dict.items():
+    for sample_id, (family_id, sample_uri, pedigree_path) in input_dict.items():
         if family_id not in family_dict.keys():
-            family_dict[family_id] = [[sample_id], [sample_uri]]
+            family_dict[family_id] = [[sample_id], [sample_uri], pedigree_path]
         else:
             family_dict[family_id][0] += [sample_id]
             family_dict[family_id][1] += [sample_uri]
@@ -74,19 +74,37 @@ def run_command_dx(workflow_config, vcf_file_list, tbi_file_list, bai_file_list,
                  workflow_config["DNA_WF2_PED"], ped_file)
     subprocess.check_call(command, shell=True)
 
-def check_file(sample_id_list, output_folder):
+def check_file_on_DNAnexus(full_file_path):
+    '''
+    Check if the file exists on DNAnexus or not
+    :param full_file_path: full path of the file on DNAnexus includes the project istage
+    :return: status of the file (closed) or False
+    '''
+    file_path = "/".join(full_file_path.split("/")[:-1])
+    file_name = full_file_path.split("/")[-1]
+    command = "dx find data --path %s --name %s" % (file_path, file_name)
+    proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
+    result = proc.communicate()[0].strip().split()
+    return result and result[0] or False
+
+def check_file(sample_id_list, output_folder, pedigree_path):
     '''
     Check if all needed files are existed three times
     :return:
     '''
+    if os.path.isfile(pedigree_path):
+        pass
+    else:
+        exit(1)
     vcf_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz" for sample_id in sample_id_list]
     tbi_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz.tbi" for sample_id in sample_id_list]
     bam_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.bam" for sample_id in sample_id_list]
     bai_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.bam.bai" for sample_id in sample_id_list]
     for i in range(3):
         score_list = []
-        for need_file in vcf_file_list, tbi_file_list, bam_file_list, bai_file_list:
-            if os.path.isfile(need_file):
+        for need_file in vcf_file_list + tbi_file_list + bam_file_list + bai_file_list:
+            check_result = check_file_on_DNAnexus(need_file)
+            if check_result and check_result == "closed":
                 score_list += 1
             else:
                 score_list += 0
@@ -101,7 +119,7 @@ def check_file(sample_id_list, output_folder):
 def retrieve_sample_info(version, username, password, processLIMS_id):
     '''
     Retrieve sample information from LIMS
-    :return: dict {sample_id: (family_id, sample_uri)}
+    :return: dict {sample_id: (family_id, sample_uri, pedigree_path)}
     '''
     api, base_uri = retrieve_LIMS.initiate_LIMS_api(version, username, password)
     p_uri = base_uri + "processes/" + processLIMS_id
@@ -140,8 +158,8 @@ def generate_report(sample_uri_list, xml_path):
 def workflow2(input_dict, output_folder, config_json, run_id, pipeline_version):
     input_dict = retrieve_sample_info("", "", "", "")
     family_dict = group_family(input_dict)
-    for family_id, [sample_id_list, sample_uri_list] in family_dict.items():
-        vcf_file_list, tbi_file_list, bam_file_list, bai_file_list = check_file(sample_id_list, output_folder)
+    for family_id, [sample_id_list, sample_uri_list, pedigree_path] in family_dict.items():
+        vcf_file_list, tbi_file_list, bam_file_list, bai_file_list = check_file(sample_id_list, pedigree_path, output_folder)
         work_config = read_config(config_json)
         run_command_dx(work_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list)
         xml_path = download_file(output_folder, sample_id_list, family_id, run_id, pipeline_version)
