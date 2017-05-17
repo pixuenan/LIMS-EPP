@@ -19,60 +19,36 @@ def read_config(config_json):
     workflow_config = data["DNAnexus"]
     return workflow_config
 
+
 def group_family(input_dict):
     '''
     Group sample by family ID
-    :param input_dict: sample info dictionary {(sample_id: (family_id, sample_uri, pedigree_path)}
-    :return: family_dict: family info dictionary {family_id: [[sample_id_list], [sample_uri_list], pedigree_path]}
+    :param input_dict: sample info dictionary {(sample_id: (family_id, pedigree_path)}
+    :return: family_dict: family info dictionary {family_id: [[sample_id_list], pedigree_path]}
     '''
     family_dict = dict()
     for sample_id, (family_id, sample_uri, pedigree_path) in input_dict.items():
         if family_id not in family_dict.keys():
-            family_dict[family_id] = [[sample_id], [sample_uri], pedigree_path]
+            family_dict[family_id] = [[sample_id], pedigree_path]
         else:
             family_dict[family_id][0] += [sample_id]
             family_dict[family_id][1] += [sample_uri]
     return family_dict
 
+
 def form_command_multiple_file(workflow_config, file_list, json_key):
     """Form the part of the command line that may be multiplied by file of family members"""
     command = ""
     for input_file in file_list:
-        command += "-i%s=%s " % (workflow_config[json_key], input_file)
+        command += "%s=%s " % (workflow_config[json_key], input_file)
     command = command.strip()
     return command
 
-def make_family_output_folder(output_folder, family_id):
-    '''
-    Make family
-    '''
-    family_output_folder = output_folder + "/" + family_id + "/"
-    command = "dx mkdir -p " + family_output_folder
-    subprocess.check_call(command, shell=True)
-    return family_output_folder
 
-def run_command_dx(workflow_config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list):
-    '''
-    Run the main command of workflow2 on DNAnexus
-    '''
-    family_id = ""
-    output_folder = ""
-    ped_file = ""
-    family_output_folder = make_family_output_folder(output_folder, family_id)
-    vcf_command = form_command_multiple_file(workflow_config, vcf_file_list, "DNA_WF2_VCF")
-    tbi_command = form_command_multiple_file(workflow_config, tbi_file_list, "DNA_WF2_TBI")
-    bam_command = form_command_multiple_file(workflow_config, bam_file_list, "DNA_WF2_BAM")
-    bai_command = form_command_multiple_file(workflow_config, bai_file_list, "DNA_WF2_BAI")
-    command = "dx run %s %s %s -i%s=%s -y --brief --destination %s -i%s=%s %s %s -i%s=%s -i%s=%s" \
-              % (workflow_config["DNA_SK_WORKFLOW"],
-                 vcf_command, tbi_command,
-                 workflow_config["DNA_WF2_VCF"].split(".")[0] + ".prefix", family_id,
-                 family_output_folder,
-                 workflow_config["DNA_WF2_NAME"], family_id,
-                 bam_command, bai_command,
-                 workflow_config["DNA_WF2_BAM"].split(".")[0] + ".sample_name", family_id,
-                 workflow_config["DNA_WF2_PED"], ped_file)
+def make_folder_on_DNAnexus(folder_name):
+    command = "dx mkdir -p " + folder_name
     subprocess.check_call(command, shell=True)
+
 
 def check_file_on_DNAnexus(full_file_path):
     '''
@@ -87,15 +63,66 @@ def check_file_on_DNAnexus(full_file_path):
     result = proc.communicate()[0].strip().split()
     return result and result[0] or False
 
-def check_file(sample_id_list, output_folder, pedigree_path):
+
+def upload_file_on_DNAnexus(DNAnexus_folder, local_file_path):
+    command = "dx upload --path %s %s" % (DNAnexus_folder, local_file_path)
+    subprocess.check_call(command, shell=True)
+
+
+def download_file_on_DNAnexus(file_path):
+    '''
+    :param file_path: path of the file on DNAnexus, can be single file or multiple file seperated by whitespace
+    '''
+    download_command = "dx download " + file_path
+    subprocess.check_call(download_command, shell=True)
+
+
+def make_family_output_folder(output_folder, family_id):
+    '''
+    Make family output folder on DNAnexus
+    '''
+    family_output_folder = output_folder + "/" + family_id + "/"
+    make_folder_on_DNAnexus(family_output_folder)
+    return family_output_folder
+
+
+def make_local_download_folder(run_id, pipeline_version, family_id):
+    '''
+    Make the local folder for downloading all result file from DNAnexus and the pedigree file
+    '''
+    flowcell = run_id.split("_")[0][1:]
+    cur_date = date.today().strftime("%Y%m%d")[2:]
+    destination_folder = "/mnt/seq/polarisbioit/PolarisPool/LIMS_PRD_Ver_%s_%s_%s/" % (pipeline_version, cur_date, flowcell)
+    os.mkdir(destination_folder, 0750)
+    return destination_folder
+
+
+def main_dx_command(workflow_config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list, family_output_folder, family_id):
+    '''
+    Run the main command of workflow2 on DNAnexus
+    '''
+    vcf_command = form_command_multiple_file(workflow_config, vcf_file_list, "DNA_WF2_VCF")
+    tbi_command = form_command_multiple_file(workflow_config, tbi_file_list, "DNA_WF2_TBI")
+    bam_command = form_command_multiple_file(workflow_config, bam_file_list, "DNA_WF2_BAM")
+    bai_command = form_command_multiple_file(workflow_config, bai_file_list, "DNA_WF2_BAI")
+    ped_file = family_output_folder + family_id + ".ped"
+    command = "dx run %s -i%s -i%s -i%s=%s -y --brief --destination %s -i%s=%s -i%s -i%s -i%s=%s -i%s=%s" \
+              % (workflow_config["DNA_SK_WORKFLOW"],
+                 vcf_command, tbi_command,
+                 workflow_config["DNA_WF2_VCF"].split(".")[0] + ".prefix", family_id,
+                 family_output_folder,
+                 workflow_config["DNA_WF2_NAME"], family_id,
+                 bam_command, bai_command,
+                 workflow_config["DNA_WF2_BAM"].split(".")[0] + ".sample_name", family_id,
+                 workflow_config["DNA_WF2_PED"], ped_file)
+    return command
+
+
+def check_file(sample_id_list, output_folder):
     '''
     Check if all needed files are existed three times
     :return:
     '''
-    if os.path.isfile(pedigree_path):
-        pass
-    else:
-        exit(1)
     vcf_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz" for sample_id in sample_id_list]
     tbi_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz.tbi" for sample_id in sample_id_list]
     bam_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.bam" for sample_id in sample_id_list]
@@ -116,12 +143,27 @@ def check_file(sample_id_list, output_folder, pedigree_path):
     if sum(score_list) < len(sample_id_list) * 4:
         exit(1)
 
-def retrieve_sample_info(version, username, password, processLIMS_id):
+
+def process_pedigree(pedigree_path, hostname, family_id, local_folder, username, password, family_output_folder):
+    '''
+    Download pedigree file from LIMS server and upload the file on DNAnexus
+    :param pedigree_path: sftp address of the pedigree_path on LIMS server
+    :param hostname: hostname of the LIMS server
+    :param local_folder: local destination folder for downloading
+    :return:
+    '''
+    # download the file from LIMS to local
+    local_file_path = local_folder + family_id + ".ped"
+    retrieve_LIMS.copy_file_from_sftp(local_file_path, pedigree_path, hostname, username, password)
+    upload_file_on_DNAnexus(family_output_folder, local_file_path)
+
+
+def retrieve_sample_info(version, username, password, processLIMS_id, hostname):
     '''
     Retrieve sample information from LIMS
     :return: dict {sample_id: (family_id, sample_uri, pedigree_path)}
     '''
-    api, base_uri = retrieve_LIMS.initiate_LIMS_api(version, username, password)
+    api, base_uri = retrieve_LIMS.initiate_LIMS_api(version, username, password, hostname)
     p_uri = base_uri + "processes/" + processLIMS_id
     p_dom = retrieve_LIMS.get_dom(api, p_uri)
 
@@ -129,41 +171,48 @@ def retrieve_sample_info(version, username, password, processLIMS_id):
     sample_info_dict = retrieve_LIMS.get_sample_info(api, sample_sheet_uri)
     return sample_info_dict
 
-def download_file(output_folder, sample_id_list, family_id, run_id, pipeline_version):
+
+def download_file(output_folder, sample_id_list, family_id, destination_folder):
     '''
-    Download file from DNAnexus to PolarisPool
+    Download necessary result file from DNAnexus to PolarisPool
     '''
-    flowcell = run_id.split("_")[0][1:]
-    cur_date = date.today().strftime("%Y%m%d")[2:]
-    destination_folder = "/mnt/seq/polarisbioit/PolarisPool/LIMS_PRD_Ver_%s_%s_%s" % (pipeline_version, cur_date, flowcell)
     # enter the destination folder
-    os.mkdir(destination_folder, 0750)
     os.chdir(destination_folder)
     # download files from DNAnexus
     bwa_stats_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.bam.BWA.stats" for sample_id in sample_id_list]
-    xml_file = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep_filtered_variants_selected.xml"
     txt_file = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep_filtered_variants_selected.txt"
     vep_html = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep.html"
     vcf_stats = output_folder + "/" + family_id + "/" + family_id + ".vcf.stats"
     excel_file = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep_filtered_variants.xlsx"
-    download_command = "dx download %s %s %s %s %s %s" % ("".join(bwa_stats_file_list), xml_file, txt_file, vep_html, vcf_stats, excel_file)
-    subprocess.check_call(download_command, shell=True)
-    local_xml_path = destination_folder + "/" + xml_file
-    return local_xml_path
+    download_file_on_DNAnexus("".join(bwa_stats_file_list + [txt_file, vep_html, vcf_stats, excel_file]))
 
-def generate_report(sample_uri_list, xml_path):
-    report_command = "python SureKids_report.py -u %s -x %s" % ("|".join(sample_uri_list), xml_path)
-    subprocess.check_call(report_command, shell=True)
 
-def workflow2(input_dict, output_folder, config_json, run_id, pipeline_version):
-    input_dict = retrieve_sample_info("", "", "", "")
+def workflow2(input_dict, output_DNAnexus, config_json, run_id, pipeline_version, hostname):
+    '''
+    :param input_dict: sample info dict
+    :param output_DNAnexus: output folder for the SureKids project on DNAnexus
+    :param hostname: LIMS server hostname https://......
+    '''
+    hostname, input_dict = retrieve_sample_info("", "", "", "", hostname)
+    work_config = read_config(config_json)
+    output_folder = "%s:/SureKids/%s/" % (work_config["DNAnexus"]["DNA_OUTPUT_PROJECT"], run_id)
     family_dict = group_family(input_dict)
-    for family_id, [sample_id_list, sample_uri_list, pedigree_path] in family_dict.items():
+
+    for family_id, [sample_id_list, pedigree_path] in family_dict.items():
         vcf_file_list, tbi_file_list, bam_file_list, bai_file_list = check_file(sample_id_list, pedigree_path, output_folder)
-        work_config = read_config(config_json)
-        run_command_dx(work_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list)
-        xml_path = download_file(output_folder, sample_id_list, family_id, run_id, pipeline_version)
-        generate_report(sample_uri_list, xml_path)
+        destination_folder = make_local_download_folder(run_id, pipeline_version, family_id)
+        family_output_folder = make_family_output_folder(output_folder, family_id)
+
+        command = main_dx_command(work_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list, family_output_folder, family_id)
+        process = subprocess.Popen(command, shell=True)
+        family_dict[family_id] += [process, destination_folder]
+
+    # download files of the family after the DNAnexus pipeline finished
+    for family_id, [sample_id_list, pedigree_path, process, destination_folder] in family_dict.items():
+        if process is None:
+            process.wait()
+        else:
+            download_file(output_folder, sample_id_list, family_id, destination_folder)
 
 if __name__=="__main__":
     config = read_config("C:\Users\pix1\LIMS\EPP\.idea\SUREKIDS.REFERENCE.CONF.json")
