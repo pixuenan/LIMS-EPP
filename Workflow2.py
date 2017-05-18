@@ -10,6 +10,7 @@ import retrieve_LIMS
 import time
 from datetime import date
 import os
+import ConfigParser
 
 def read_config(config_json):
     """Read the configuration file"""
@@ -20,19 +21,78 @@ def read_config(config_json):
     return workflow_config
 
 
+def write_ini(ini_file, info_dict):
+    '''
+    Write the information of affected sample into a ini file
+    :param ini_file: name of the output ini file
+    :param info_dict:
+    :return:
+    '''
+    config = ConfigParser.RawConfigParser()
+    config.optionxform = str
+    config.add_section("Patient_information")
+    config.add_section("Client_information")
+    config.add_section("Sample_information")
+    config.add_section("Test_information")
+
+    config.set("Patient_information", "RUN_DATE", date.today())
+    config.set("Patient_information", "Pat_name", info_dict["Pt Name"])
+    config.set("Patient_information", "Date_of_Birth", info_dict["Pt D.O.B"])
+    config.set("Patient_information", "Gender", info_dict["Pt Gender"])
+    config.set("Patient_information", "Patient_ID", info_dict["Patient_ID"])
+    config.set("Patient_information", "Family_ID", info_dict["Family_ID"])
+    config.set("Patient_information", "Race", info_dict["Pt Race"])
+
+    config.set("Client_information", "Hospital", info_dict["Pt Hospital"])
+    config.set("Client_information", "Department", info_dict["Pt Dept"])
+    config.set("Client_information", "Client", info_dict["Req Client"])
+    config.set("Client_information", "Physician", info_dict["Req Physician"])
+    config.set("Client_information", "Pathologist", info_dict["Req Pathologist"])
+    config.set("Client_information", "Laboratory", info_dict["Req Test Lab"])
+
+    config.set("Sample_information", "Sample_Internal_ID", info_dict["Polaris Sample id"])
+    config.set("Sample_information", "Sample_External_ID", info_dict["Pt External ID"])
+    config.set("Sample_information", "DNA_Concentration", info_dict["Sample Conc. (ng/uL)"])
+    config.set("Sample_information", "Date_time_received", info_dict["Date Submitted"])
+    config.set("Sample_information", "Specimen_site", info_dict["Site"])
+    config.set("Sample_information", "Specimen_type", info_dict["Sample Type"])
+    config.set("Sample_information", "Met_performance_standards", "PASS")
+
+    config.set("Test_information", "Test_ordered", "SureKids")
+    config.set("Test_information", "Diagnosis", '""')
+
+    ini_content = open(ini_file, 'w+')
+    config.write(ini_content)
+    ini_content.close()
+
+
 def group_family(input_dict):
     '''
     Group sample by family ID
-    :param input_dict: sample info dictionary {(sample_id: (family_id, pedigree_path)}
-    :return: family_dict: family info dictionary {family_id: [[sample_id_list], pedigree_path]}
+    :param input_dict: sample info dictionary {(sample_id: (family_id, pedigree_path, info_dict/None)}
+    :return: family_dict: family info dictionary {family_id: [[sample_id_list], pedigree_path, affected_dict]]}
     '''
     family_dict = dict()
-    for sample_id, (family_id, sample_uri, pedigree_path) in input_dict.items():
+    for sample_id, (family_id, pedigree_path, affect_status) in input_dict.items():
         if family_id not in family_dict.keys():
-            family_dict[family_id] = [[sample_id], pedigree_path]
+            family_dict[family_id] = [[sample_id], pedigree_path, [affect_status]]
         else:
             family_dict[family_id][0] += [sample_id]
-            family_dict[family_id][1] += [sample_uri]
+            family_dict[family_id][2] += [affect_status]
+
+    # concatenate the info_dict if there are multiple affected individuals
+    for family_id, [[sample_id_list], pedigree_path, affect_status_list] in family_dict.keys():
+        affect_dict_list = []
+        for affect_status in affect_status_list:
+            if affect_status is not None:
+                affect_dict_list += affect_status
+        if len(affect_dict_list) > 1:
+            final_dict = dict()
+            for key in affect_dict_list[0].keys():
+                final_dict[key] = ",".join([affect_dict[key] for affect_dict in affect_dict_list])
+            family_dict[family_id][2] = final_dict
+        else:
+            family_dict[family_id][2] = affect_dict_list[0]
     return family_dict
 
 
@@ -144,6 +204,20 @@ def check_file(sample_id_list, output_folder):
         exit(1)
 
 
+def process_ini(family_id, local_folder, info_dict, family_output_folder):
+    '''
+    Create ini file for affected individuals and upload the file on DNAnexus
+    :param pedigree_path: sftp address of the pedigree_path on LIMS server
+    :param hostname: hostname of the LIMS server
+    :param local_folder: local destination folder for downloading
+    :return:
+    '''
+    # download the file from LIMS to local
+    local_file_path = local_folder + family_id + ".ini"
+    write_ini(local_file_path, info_dict)
+    upload_file_on_DNAnexus(family_output_folder, local_file_path)
+
+
 def process_pedigree(pedigree_path, hostname, family_id, local_folder, username, password, family_output_folder):
     '''
     Download pedigree file from LIMS server and upload the file on DNAnexus
@@ -193,6 +267,8 @@ def workflow2(input_dict, output_DNAnexus, config_json, run_id, pipeline_version
     :param output_DNAnexus: output folder for the SureKids project on DNAnexus
     :param hostname: LIMS server hostname https://......
     '''
+    username = None # glsftp
+    password = None # glsftp password
     hostname, input_dict = retrieve_sample_info("", "", "", "", hostname)
     work_config = read_config(config_json)
     output_folder = "%s:/SureKids/%s/" % (work_config["DNAnexus"]["DNA_OUTPUT_PROJECT"], run_id)
@@ -202,6 +278,7 @@ def workflow2(input_dict, output_DNAnexus, config_json, run_id, pipeline_version
         vcf_file_list, tbi_file_list, bam_file_list, bai_file_list = check_file(sample_id_list, pedigree_path, output_folder)
         destination_folder = make_local_download_folder(run_id, pipeline_version, family_id)
         family_output_folder = make_family_output_folder(output_folder, family_id)
+        process_pedigree(pedigree_path, hostname, family_id, destination_folder, username, password, family_output_folder)
 
         command = main_dx_command(work_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list, family_output_folder, family_id)
         process = subprocess.Popen(command, shell=True)
@@ -221,4 +298,5 @@ if __name__=="__main__":
     bai_file_list = ["bai1", "bai2", "bai3"]
     bam_file_list = ["bam1", "bam2", "bam3"]
     # print form_dx_command(config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list)
+    write_ini("test.ini")
     # workflow2(sample_dict, "", config)

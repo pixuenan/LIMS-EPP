@@ -60,15 +60,34 @@ def get_file_location(api, base_uri, file_id):
     return file_loc
 
 
-def get_sample_info(api, sample_sheet_uri):
+def udf_info_dict(udf_fields, info_list):
+    '''
+    Retrieve UDF info from UDF fields
+    :param udf_fields: list of udf objects
+    :param info_list: list of udf names needed to be retrieved
+    :return: info_dict: {needed_udf: value(None if the udf not exists)}
+    '''
+    info_dict = {key: "" for key in info_list}
+    for udf_field in udf_fields:
+        udf_name = udf_field.attributes["name"].value
+        if udf_name in info_dict.keys():
+            info_dict[udf_name] = udf_field.firstChild.nodeValue
+    return info_dict
+
+
+def get_sample_info(api, sample_sheet_uri, base_uri):
     '''
     Get sample information from sample sheet uri.
     Form sample and family id as "external id_polaris id"
-    :return: dict {sample_id: (family_id, pedigree_path)}
+    :return: dict {sample_id: (family_id, pedigree_path, info_dict/None)}
     '''
     sample_sheet_dom = get_dom(api, sample_sheet_uri)
     sample_doms = sample_sheet_dom.getElementsByTagName("sample")
     sample_info_dict = dict()
+    needed_udf_list = ["Pt External ID", "External Family ID", "Polaris Family ID", "Pedigree Path", "Affected"]
+    info_udf_list = ["Pt Name", "Pt D.O.B", "Pt Gender", "Pt Race", "Pt Hospital", "Pt Dept",
+                     "Req Client", "Req Physician",  "Req Pathologist", "Req Test Lab",
+                     "Sample Conc. (ng/uL)", "Date Submitted", "Site", "Sample Type"]
     for sample_dom in sample_doms:
         sample_uri = sample_dom.attributes["uri"].value
         sample_dom = get_dom(api, sample_uri)
@@ -76,16 +95,19 @@ def get_sample_info(api, sample_sheet_uri):
         if not control:
             polaris_sample_id = sample_dom.getElementsByTagName("name")[0].firstChild.nodeValue
             udf_fields = sample_dom.getElementsByTagName("udf:field")
-            for udf_field in udf_fields:
-                udf_name = udf_field.attributes["name"].value
-                external_sample_id = udf_name == "Sample External ID" and udf_field.firstChild.nodeValue or None
-                external_family_id = udf_name == "External Family ID" and udf_field.firstChild.nodeValue or None
-                polaris_family_id = udf_name == "Polaris Family ID" and udf_field.firstChild.nodeValue or None
-                pedigree_file_id = udf_name == "Pedigree Path" and udf_field.firstChild.nodeValue or None
-                pedigree_path = pedigree_file_id and get_file_location(pedigree_file_id) or None
-            sample_id = external_sample_id + "." + polaris_sample_id
-            family_id = external_family_id + "." + polaris_family_id
-            sample_info_dict[sample_id] = (family_id, pedigree_path)
+            udf_needed_dict = udf_info_dict(udf_fields, needed_udf_list)
+            pedigree_path = udf_needed_dict["Pedigree Path"] and get_file_location(api, base_uri, udf_needed_dict["Pedigree Path"]) or None
+            sample_id = udf_needed_dict["Pt External ID"] + "." + polaris_sample_id
+            family_id = udf_needed_dict["External Family ID"] + "." + udf_needed_dict["Polaris Family ID"]
+            if udf_needed_dict["Affected"]:
+                info_dict = udf_info_dict(udf_fields, info_udf_list)
+                info_dict["Patient_ID"] = sample_id
+                info_dict["Family_ID"] = family_id
+                info_dict["Polaris Sample id"] = polaris_sample_id
+                info_dict["Pt External ID"] = udf_needed_dict["Pt External ID"]
+                sample_info_dict[sample_id] = (family_id, pedigree_path, info_dict)
+            else:
+                sample_info_dict[sample_id] = (family_id, pedigree_path, None)
     return sample_info_dict
 
 
