@@ -11,6 +11,7 @@ import time
 from datetime import date
 import os
 import ConfigParser
+import DNAnexus_command
 
 def read_config(config_json):
     """Read the configuration file"""
@@ -40,7 +41,6 @@ def write_ini(ini_file, info_dict):
     config.set("Patient_information", "Date_of_Birth", info_dict["Pt D.O.B"])
     config.set("Patient_information", "Gender", info_dict["Pt Gender"])
     config.set("Patient_information", "Patient_ID", info_dict["Patient_ID"])
-    config.set("Patient_information", "Family_ID", info_dict["Family_ID"])
     config.set("Patient_information", "Race", info_dict["Pt Race"])
 
     config.set("Client_information", "Hospital", info_dict["Pt Hospital"])
@@ -59,7 +59,7 @@ def write_ini(ini_file, info_dict):
     config.set("Sample_information", "Met_performance_standards", "PASS")
 
     config.set("Test_information", "Test_ordered", "SureKids")
-    config.set("Test_information", "Diagnosis", '""')
+    config.set("Test_information", "Diagnosis", "")
 
     ini_content = open(ini_file, 'w+')
     config.write(ini_content)
@@ -105,44 +105,12 @@ def form_command_multiple_file(workflow_config, file_list, json_key):
     return command
 
 
-def make_folder_on_DNAnexus(folder_name):
-    command = "dx mkdir -p " + folder_name
-    subprocess.check_call(command, shell=True)
-
-
-def check_file_on_DNAnexus(full_file_path):
-    '''
-    Check if the file exists on DNAnexus or not
-    :param full_file_path: full path of the file on DNAnexus includes the project istage
-    :return: status of the file (closed) or False
-    '''
-    file_path = "/".join(full_file_path.split("/")[:-1])
-    file_name = full_file_path.split("/")[-1]
-    command = "dx find data --path %s --name %s" % (file_path, file_name)
-    proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
-    result = proc.communicate()[0].strip().split()
-    return result and result[0] or False
-
-
-def upload_file_on_DNAnexus(DNAnexus_folder, local_file_path):
-    command = "dx upload --path %s %s" % (DNAnexus_folder, local_file_path)
-    subprocess.check_call(command, shell=True)
-
-
-def download_file_on_DNAnexus(file_path):
-    '''
-    :param file_path: path of the file on DNAnexus, can be single file or multiple file seperated by whitespace
-    '''
-    download_command = "dx download " + file_path
-    subprocess.check_call(download_command, shell=True)
-
-
 def make_family_output_folder(output_folder, family_id):
     '''
     Make family output folder on DNAnexus
     '''
     family_output_folder = output_folder + "/" + family_id + "/"
-    make_folder_on_DNAnexus(family_output_folder)
+    DNAnexus_command.make_folder(family_output_folder)
     return family_output_folder
 
 
@@ -190,7 +158,7 @@ def check_file(sample_id_list, output_folder):
     for i in range(3):
         score_list = []
         for need_file in vcf_file_list + tbi_file_list + bam_file_list + bai_file_list:
-            check_result = check_file_on_DNAnexus(need_file)
+            check_result = DNAnexus_command.check_file(need_file)
             if check_result and check_result == "closed":
                 score_list += 1
             else:
@@ -229,7 +197,7 @@ def process_pedigree(pedigree_path, hostname, family_id, local_folder, username,
     # download the file from LIMS to local
     local_file_path = local_folder + family_id + ".ped"
     retrieve_LIMS.copy_file_from_sftp(local_file_path, pedigree_path, hostname, username, password)
-    upload_file_on_DNAnexus(family_output_folder, local_file_path)
+    DNAnexus_command.upload_file(family_output_folder, local_file_path)
 
 
 def retrieve_sample_info(version, username, password, processLIMS_id, hostname):
@@ -258,7 +226,7 @@ def download_file(output_folder, sample_id_list, family_id, destination_folder):
     vep_html = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep.html"
     vcf_stats = output_folder + "/" + family_id + "/" + family_id + ".vcf.stats"
     excel_file = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep_filtered_variants.xlsx"
-    download_file_on_DNAnexus("".join(bwa_stats_file_list + [txt_file, vep_html, vcf_stats, excel_file]))
+    DNAnexus_command.download_batch_file("".join(bwa_stats_file_list + [txt_file, vep_html, vcf_stats, excel_file]))
 
 
 def workflow2(input_dict, output_DNAnexus, config_json, run_id, pipeline_version, hostname):
