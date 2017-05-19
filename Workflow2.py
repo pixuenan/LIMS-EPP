@@ -6,12 +6,13 @@
 ################################################
 import json
 import subprocess
-import retrieve_LIMS
+from retrieve_LIMS import RetrieveLIMS, copy_file_from_sftp
 import time
 from datetime import date
 import os
 import ConfigParser
 import DNAnexus_command
+
 
 def read_config(config_json):
     """Read the configuration file"""
@@ -69,16 +70,18 @@ def write_ini(ini_file, info_dict):
 def group_family(input_dict):
     '''
     Group sample by family ID
-    :param input_dict: sample info dictionary {(sample_id: (family_id, pedigree_path, info_dict/None)}
+    :param input_dict: sample info dictionary {(sample_id: (family_id, pedigree_path, info_dict/None, sample_result_limsid)}
     :return: family_dict: family info dictionary {family_id: [[sample_id_list], pedigree_path, affected_dict]]}
     '''
     family_dict = dict()
-    for sample_id, (family_id, pedigree_path, affect_status) in input_dict.items():
-        if family_id not in family_dict.keys():
-            family_dict[family_id] = [[sample_id], pedigree_path, [affect_status]]
-        else:
-            family_dict[family_id][0] += [sample_id]
-            family_dict[family_id][2] += [affect_status]
+    for sample_id, value in input_dict.items():
+        if value[0] != "Negative Control":
+            family_id, pedigree_path, affect_status, sample_result_limsid = value
+            if family_id not in family_dict.keys():
+                family_dict[family_id] = [[sample_id], pedigree_path, [affect_status]]
+            else:
+                family_dict[family_id][0] += [sample_id]
+                family_dict[family_id][2] += [affect_status]
 
     # concatenate the info_dict if there are multiple affected individuals
     for family_id, [[sample_id_list], pedigree_path, affect_status_list] in family_dict.keys():
@@ -175,18 +178,17 @@ def check_file(sample_id_list, output_folder):
 def process_ini(family_id, local_folder, info_dict, family_output_folder):
     '''
     Create ini file for affected individuals and upload the file on DNAnexus
-    :param pedigree_path: sftp address of the pedigree_path on LIMS server
-    :param hostname: hostname of the LIMS server
+    :param family_output_folder: family output folder on DNAnexus
     :param local_folder: local destination folder for downloading
     :return:
     '''
     # download the file from LIMS to local
     local_file_path = local_folder + family_id + ".ini"
     write_ini(local_file_path, info_dict)
-    upload_file_on_DNAnexus(family_output_folder, local_file_path)
+    DNAnexus_command.upload_file(family_output_folder, local_file_path)
 
 
-def process_pedigree(pedigree_path, hostname, family_id, local_folder, username, password, family_output_folder):
+def process_pedigree(family_id, local_folder, pedigree_path, hostname, username, password, family_output_folder):
     '''
     Download pedigree file from LIMS server and upload the file on DNAnexus
     :param pedigree_path: sftp address of the pedigree_path on LIMS server
@@ -196,22 +198,16 @@ def process_pedigree(pedigree_path, hostname, family_id, local_folder, username,
     '''
     # download the file from LIMS to local
     local_file_path = local_folder + family_id + ".ped"
-    retrieve_LIMS.copy_file_from_sftp(local_file_path, pedigree_path, hostname, username, password)
+    copy_file_from_sftp(hostname, local_file_path, pedigree_path, username, password)
     DNAnexus_command.upload_file(family_output_folder, local_file_path)
 
 
-def retrieve_sample_info(version, username, password, processLIMS_id, hostname):
+def update_bioinfo_status(LIMS_object, current_status, sample_result_limsid):
     '''
-    Retrieve sample information from LIMS
-    :return: dict {sample_id: (family_id, sample_uri, pedigree_path)}
+    Update the sample bioinformatic status
     '''
-    api, base_uri = retrieve_LIMS.initiate_LIMS_api(version, username, password, hostname)
-    p_uri = base_uri + "processes/" + processLIMS_id
-    p_dom = retrieve_LIMS.get_dom(api, p_uri)
-
-    sample_sheet_uri = retrieve_LIMS.get_sample_sheet(p_dom)
-    sample_info_dict = retrieve_LIMS.get_sample_info(api, sample_sheet_uri)
-    return sample_info_dict
+    sample_uri = LIMS_object.base_uri + "artifacts/" + sample_result_limsid
+    LIMS_object.update_udf(sample_uri, "Status", current_status)
 
 
 def download_file(output_folder, sample_id_list, family_id, destination_folder):
@@ -222,22 +218,23 @@ def download_file(output_folder, sample_id_list, family_id, destination_folder):
     os.chdir(destination_folder)
     # download files from DNAnexus
     bwa_stats_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.bam.BWA.stats" for sample_id in sample_id_list]
-    txt_file = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep_filtered_variants_selected.txt"
-    vep_html = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep.html"
-    vcf_stats = output_folder + "/" + family_id + "/" + family_id + ".vcf.stats"
-    excel_file = output_folder + "/" + family_id + "/" + family_id + ".dec.nor.vep_filtered_variants.xlsx"
-    DNAnexus_command.download_batch_file("".join(bwa_stats_file_list + [txt_file, vep_html, vcf_stats, excel_file]))
+    sample_vcf_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz" for sample_id in sample_id_list]
+    family_need_file_suffix = [".dec.nor.vep_filtered_variants_selected.txt", ".dec.nor.vep_filtered_variants.xlsx",
+                               ".dec.nor.vep_filtered_variants_selected.xml",
+                               ".dec.nor.vep.html", "dec.nor.vep.vcf.gz", ".vcf.stats", ".vcf.gz"
+                               ".png", "_gene_summary", "_sample_summary", "dec.nor.vep.vcf.gz"]
+    family_need_file = [output_folder + "/" + family_id + "/" + family_id + suffix for suffix in family_need_file_suffix]
+    DNAnexus_command.download_batch_file("".join(bwa_stats_file_list + sample_vcf_file_list + family_need_file))
 
 
-def workflow2(input_dict, output_DNAnexus, config_json, run_id, pipeline_version, hostname):
+def workflow2(LIMS_api, input_dict, config_json, run_id, pipeline_version, hostname):
     '''
     :param input_dict: sample info dict
     :param output_DNAnexus: output folder for the SureKids project on DNAnexus
     :param hostname: LIMS server hostname https://......
     '''
-    username = None # glsftp
-    password = None # glsftp password
-    hostname, input_dict = retrieve_sample_info("", "", "", "", hostname)
+    sftp_username = None # glsftp
+    sftp_password = None # glsftp password
     work_config = read_config(config_json)
     output_folder = "%s:/SureKids/%s/" % (work_config["DNAnexus"]["DNA_OUTPUT_PROJECT"], run_id)
     family_dict = group_family(input_dict)
@@ -246,10 +243,12 @@ def workflow2(input_dict, output_DNAnexus, config_json, run_id, pipeline_version
         vcf_file_list, tbi_file_list, bam_file_list, bai_file_list = check_file(sample_id_list, pedigree_path, output_folder)
         destination_folder = make_local_download_folder(run_id, pipeline_version, family_id)
         family_output_folder = make_family_output_folder(output_folder, family_id)
-        process_pedigree(pedigree_path, hostname, family_id, destination_folder, username, password, family_output_folder)
+        process_pedigree(family_id, destination_folder, pedigree_path, hostname, sftp_username, sftp_password, family_output_folder)
+        process_ini(family_id, destination_folder, input_dict, family_output_folder)
 
         command = main_dx_command(work_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list, family_output_folder, family_id)
         process = subprocess.Popen(command, shell=True)
+        [update_bioinfo_status(LIMS_api, "Running workflow2", input_dict[sample_id]) for sample_id in sample_id_list]
         family_dict[family_id] += [process, destination_folder]
 
     # download files of the family after the DNAnexus pipeline finished
@@ -257,7 +256,9 @@ def workflow2(input_dict, output_DNAnexus, config_json, run_id, pipeline_version
         if process is None:
             process.wait()
         else:
+            [update_bioinfo_status(LIMS_api, "Downloading files", input_dict[sample_id]) for sample_id in sample_id_list]
             download_file(output_folder, sample_id_list, family_id, destination_folder)
+            [update_bioinfo_status(LIMS_api, "Pipeline finished", input_dict[sample_id]) for sample_id in sample_id_list]
 
 if __name__=="__main__":
     config = read_config("C:\Users\pix1\LIMS\EPP\.idea\SUREKIDS.REFERENCE.CONF.json")
@@ -266,5 +267,8 @@ if __name__=="__main__":
     bai_file_list = ["bai1", "bai2", "bai3"]
     bam_file_list = ["bam1", "bam2", "bam3"]
     # print form_dx_command(config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list)
-    write_ini("test.ini")
     # workflow2(sample_dict, "", config)
+    LIMS_api = RetrieveLIMS("", "", "")
+    LIMS_api.initiate_LIMS_api()
+    # input_dict = LIMS_api.get_sample_info(process_limsid)
+    update_bioinfo_status(LIMS_api, "Test1", "92-91651")
