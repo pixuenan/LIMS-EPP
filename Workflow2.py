@@ -12,6 +12,7 @@ from datetime import date
 import os
 import ConfigParser
 import DNAnexus_command
+import logging
 
 
 def read_config(config_json):
@@ -112,9 +113,13 @@ def make_family_output_folder(output_folder, family_id):
     '''
     Make family output folder on DNAnexus
     '''
-    family_output_folder = output_folder + "/" + family_id + "/"
-    DNAnexus_command.make_folder(family_output_folder)
-    return family_output_folder
+    family_output_folder = output_folder + family_id + "/"
+    if DNAnexus_command.make_folder(family_output_folder) == 0:
+        logger.info("Make family folder on DNAnexus at: %s" % family_output_folder)
+        return family_output_folder
+    else:
+        logger.debug("Failed to make family folder on DNAnexus at: %s" % family_output_folder)
+        return False
 
 
 def make_local_download_folder(run_id, pipeline_version, family_id):
@@ -124,11 +129,18 @@ def make_local_download_folder(run_id, pipeline_version, family_id):
     flowcell = run_id.split("_")[0][1:]
     cur_date = date.today().strftime("%Y%m%d")[2:]
     destination_folder = "/mnt/seq/polarisbioit/PolarisPool/LIMS_PRD_Ver_%s_%s_%s/" % (pipeline_version, cur_date, flowcell)
-    os.mkdir(destination_folder, 0750)
-    return destination_folder
+    try:
+        os.mkdir(destination_folder, 0750)
+    except:
+        logger.debug("Failed to make local folder to download files at: %s" % destination_folder)
+        return False
+    else:
+        logger.info("Make local folder to download files at: %s" % destination_folder)
+        return destination_folder
 
 
-def main_dx_command(workflow_config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list, family_output_folder, family_id):
+def main_dx_command(workflow_config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list, family_output_folder,
+                    family_id):
     '''
     Run the main command of workflow2 on DNAnexus
     '''
@@ -168,11 +180,12 @@ def check_file(sample_id_list, output_folder):
                 score_list += 0
         if sum(score_list) < len(sample_id_list) * 4:
             time.sleep(300)
-            pass
         else:
+            logger.info("All sample input files for family member %s are exists on DNAnexus" % ",".join(sample_id_list))
             return vcf_file_list, tbi_file_list, bam_file_list, bai_file_list
     if sum(score_list) < len(sample_id_list) * 4:
-        exit(1)
+        logger.debug("Not all sample input files for family member %s are exists on DNAnexus" % ",".join(sample_id_list))
+        return False
 
 
 def process_ini(family_id, local_folder, info_dict, family_output_folder):
@@ -185,7 +198,12 @@ def process_ini(family_id, local_folder, info_dict, family_output_folder):
     # download the file from LIMS to local
     local_file_path = local_folder + family_id + ".ini"
     write_ini(local_file_path, info_dict)
-    DNAnexus_command.upload_file(family_output_folder, local_file_path)
+    if DNAnexus_command.upload_file(family_output_folder, local_file_path) == 0:
+        logger.info("Upload ini file to DNAnexus at: %s" % family_output_folder)
+        return family_output_folder + family_id + ".ini"
+    else:
+        logger.debug("Failed to upload ini file to DNAnexus at: %s" % family_output_folder)
+        return False
 
 
 def process_pedigree(family_id, local_folder, pedigree_path, hostname, username, password, family_output_folder):
@@ -199,7 +217,13 @@ def process_pedigree(family_id, local_folder, pedigree_path, hostname, username,
     # download the file from LIMS to local
     local_file_path = local_folder + family_id + ".ped"
     copy_file_from_sftp(hostname, local_file_path, pedigree_path, username, password)
-    DNAnexus_command.upload_file(family_output_folder, local_file_path)
+    logger.info("Copying file %s from LIMS server to local folder %s" % (pedigree_path, local_file_path))
+    if DNAnexus_command.upload_file(family_output_folder, local_file_path) == 0:
+        logger.info("Upload pedigree file to DNAnexus at: %s" % family_output_folder)
+        return family_output_folder + family_id + ".ped"
+    else:
+        logger.debug("Failed to upload pedigree file to DNAnexus at: %s" % family_output_folder)
+        return False
 
 
 def update_bioinfo_status(LIMS_object, current_status, sample_result_limsid):
@@ -217,14 +241,23 @@ def download_file(output_folder, sample_id_list, family_id, destination_folder):
     # enter the destination folder
     os.chdir(destination_folder)
     # download files from DNAnexus
-    bwa_stats_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.bam.BWA.stats" for sample_id in sample_id_list]
-    sample_vcf_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz" for sample_id in sample_id_list]
+    bwa_stats_file_list = [output_folder + sample_id + "/" + sample_id + ".recalibrated.bam.BWA.stats"
+                           for sample_id in sample_id_list]
+    sample_vcf_file_list = [output_folder + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz"
+                            for sample_id in sample_id_list]
     family_need_file_suffix = [".dec.nor.vep_filtered_variants_selected.txt", ".dec.nor.vep_filtered_variants.xlsx",
                                ".dec.nor.vep_filtered_variants_selected.xml",
                                ".dec.nor.vep.html", "dec.nor.vep.vcf.gz", ".vcf.stats", ".vcf.gz"
                                ".png", "_gene_summary", "_sample_summary", "dec.nor.vep.vcf.gz"]
-    family_need_file = [output_folder + "/" + family_id + "/" + family_id + suffix for suffix in family_need_file_suffix]
-    DNAnexus_command.download_batch_file("".join(bwa_stats_file_list + sample_vcf_file_list + family_need_file))
+    family_need_file = [output_folder + family_id + "/" + family_id + suffix for suffix in family_need_file_suffix]
+    if DNAnexus_command.download_batch_file("".join(bwa_stats_file_list + sample_vcf_file_list + family_need_file)) == 0:
+        logger.info("Download files from DNAnexus: \n%s" % "\n".join(bwa_stats_file_list + sample_vcf_file_list +
+                                                                     family_need_file))
+        return True
+    else:
+        logger.info("Failed to download files from DNAnexus: \n%s" % "\n".join(bwa_stats_file_list +
+                                                                               sample_vcf_file_list + family_need_file))
+        return False
 
 
 def workflow2(LIMS_api, input_dict, config_json, run_id, pipeline_version, hostname):
@@ -237,28 +270,41 @@ def workflow2(LIMS_api, input_dict, config_json, run_id, pipeline_version, hostn
     sftp_password = None # glsftp password
     work_config = read_config(config_json)
     output_folder = "%s:/SureKids/%s/" % (work_config["DNAnexus"]["DNA_OUTPUT_PROJECT"], run_id)
+    logger.info("Output folder on DNAnexus: %s" % output_folder)
     family_dict = group_family(input_dict)
 
-    for family_id, [sample_id_list, pedigree_path] in family_dict.items():
-        vcf_file_list, tbi_file_list, bam_file_list, bai_file_list = check_file(sample_id_list, pedigree_path, output_folder)
+    for family_id, [sample_id_list, pedigree_path, affected_dict] in family_dict.items():
+        logger.info("Check per sample input files for family %s" % family_id)
+        need_sample_files = check_file(sample_id_list, output_folder)
         destination_folder = make_local_download_folder(run_id, pipeline_version, family_id)
         family_output_folder = make_family_output_folder(output_folder, family_id)
-        process_pedigree(family_id, destination_folder, pedigree_path, hostname, sftp_username, sftp_password, family_output_folder)
-        process_ini(family_id, destination_folder, input_dict, family_output_folder)
+        pedigree_file = process_pedigree(family_id, destination_folder, pedigree_path, hostname, sftp_username, sftp_password, family_output_folder)
+        ini_file = process_ini(family_id, destination_folder, affected_dict, family_output_folder)
 
-        command = main_dx_command(work_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list, family_output_folder, family_id)
-        process = subprocess.Popen(command, shell=True)
-        [update_bioinfo_status(LIMS_api, "Running workflow2", input_dict[sample_id]) for sample_id in sample_id_list]
-        family_dict[family_id] += [process, destination_folder]
+        if need_sample_files and destination_folder and family_output_folder and pedigree_file and ini_file:
+            vcf_file_list, tbi_file_list, bam_file_list, bai_file_list = need_sample_files
+            command = main_dx_command(work_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list, family_output_folder, family_id)
+            process = subprocess.Popen(command, shell=True)
+            logger.info("Start running pipeline workflow2 for family %s: %s" % (family_id, command))
+            [update_bioinfo_status(LIMS_api, "Running workflow2", input_dict[sample_id][3]) for sample_id in sample_id_list]
+            family_dict[family_id] += [process, destination_folder]
+
+        else:
+            logger.debug("Error: \n " +
+                         "Sample files: %s\n Local_folder: %s\n DNAnexus folder: %s\n Pedigree file: %s\n Ini file: %s\n"\
+                         % (need_sample_files, destination_folder, family_output_folder, pedigree_file, ini_file))
+            [update_bioinfo_status(LIMS_api, "Error workflow2", input_dict[sample_id][3]) for sample_id in sample_id_list]
+            family_dict[family_id] += ["Null", destination_folder]
 
     # download files of the family after the DNAnexus pipeline finished
-    for family_id, [sample_id_list, pedigree_path, process, destination_folder] in family_dict.items():
-        if process is None:
-            process.wait()
-        else:
-            [update_bioinfo_status(LIMS_api, "Downloading files", input_dict[sample_id]) for sample_id in sample_id_list]
-            download_file(output_folder, sample_id_list, family_id, destination_folder)
-            [update_bioinfo_status(LIMS_api, "Pipeline finished", input_dict[sample_id]) for sample_id in sample_id_list]
+    for family_id, [sample_id_list, pedigree_path, affected_dict, process, destination_folder] in family_dict.items():
+        if process != "Null":
+            if process.poll() is None:
+                process.wait()
+            [update_bioinfo_status(LIMS_api, "Downloading files", input_dict[sample_id][3]) for sample_id in sample_id_list]
+            if download_file(output_folder, sample_id_list, family_id, destination_folder):
+                [update_bioinfo_status(LIMS_api, "Pipeline finished", input_dict[sample_id][3]) for sample_id in sample_id_list]
+                logger.info("Bioinformatics pipeline for family %s finished" % family_id)
 
 if __name__=="__main__":
     config = read_config("C:\Users\pix1\LIMS\EPP\.idea\SUREKIDS.REFERENCE.CONF.json")
@@ -272,3 +318,6 @@ if __name__=="__main__":
     LIMS_api.initiate_LIMS_api()
     # input_dict = LIMS_api.get_sample_info(process_limsid)
     update_bioinfo_status(LIMS_api, "Test1", "92-91651")
+    logger = logging.basicConfig(level=logging.DEBUG,
+                                 filename="test.log",
+                                 format='%(levelname)s:%(asctime)s %(message)s')

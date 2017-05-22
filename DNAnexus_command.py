@@ -48,6 +48,17 @@ def make_folder(folder_name):
     return execute(command)
 
 
+def copy_batch_file(ori_file_path, dest_file_folder):
+    '''
+    Copy batch of file from original file path to one destination folder, the file name will be copied as exactly
+    :param ori_file_path: original file path includes project istage and file name
+           can be single file or multiple file seperated by whitespace
+    :param dest_file_path: destination file folder includes project istage and file name
+    '''
+    command = "dx cp %s %s" % (ori_file_path, dest_file_folder)
+    return execute(command)
+
+
 def check_file(full_file_path):
     '''
     Check if the file exists on DNAnexus or not
