@@ -93,11 +93,14 @@ def check_file(full_file_path):
     '''
     Check if the file exists on DNAnexus or not
     :param full_file_path: full path of the file on DNAnexus includes the project istage
-    :return: status of the file (closed) or False
+    :return: status of the file True or False
     '''
     file_path = "/".join(full_file_path.split("/")[:-1])
     file_name = full_file_path.split("/")[-1]
     command = "dx find data --path %s --name %s" % (file_path, file_name)
     proc = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE)
     result = proc.communicate()[0].strip().split()
-    return result and result[0] or False
+    if result:
+        return result[0] == "closed"
+    else:
+        return False

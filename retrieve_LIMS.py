@@ -111,7 +111,7 @@ class RetrieveLIMS(object):
         :return: dict {sample_id: (family_id, pedigree_path, info_dict/None, sample_result_limsid, pipeline_status),
                        polaris_id."Control": ("Negative Control", sample_result_limsid)}
         '''
-        needed_udf_list = ["Pt External ID", "External Family ID", "Polaris Family ID", "Pedigree Path", "Affected"]
+        needed_udf_list = ["Sample External ID", "External Family ID", "Polaris Family ID", "Pedigree Path", "Affected"]
         info_udf_list = ["Pt Name", "Pt D.O.B", "Pt Gender", "Pt Race", "Pt Hospital", "Pt Dept",
                          "Req Client", "Req Physician",  "Req Pathologist", "Req Test Lab",
                          "Sample Conc. (ng/uL)", "Date Submitted", "Site", "Sample Type"]
@@ -121,15 +121,15 @@ class RetrieveLIMS(object):
             udf_fields = sample_dom.getElementsByTagName("udf:field")
             udf_needed_dict = self.udf_info_dict(udf_fields, needed_udf_list)
             pedigree_path = udf_needed_dict["Pedigree Path"] and self.get_file_location(udf_needed_dict["Pedigree Path"]) or None
-            sample_id = udf_needed_dict["Pt External ID"] + "." + polaris_sample_id
+            sample_id = udf_needed_dict["Sample External ID"] + "." + polaris_sample_id
             family_id = udf_needed_dict["External Family ID"] + "." + udf_needed_dict["Polaris Family ID"]
             pipeline_status = glsapiutil.glsapiutil2.getUDF(self.get_dom_from_id("artifacts", sample_result_limsid), "Status")
 
             if udf_needed_dict["Affected"]:
                 info_dict = self.udf_info_dict(udf_fields, info_udf_list)
-                info_dict["Patient_ID"] = udf_needed_dict["Pt External ID"]
+                info_dict["Patient_ID"] = udf_needed_dict["Sample External ID"]
                 info_dict["Polaris Sample id"] = polaris_sample_id
-                info_dict["Pt External ID"] = udf_needed_dict["Pt External ID"]
+                info_dict["Pt External ID"] = udf_needed_dict["Sample External ID"]
                 sample_info_dict[sample_id] = (family_id, pedigree_path, info_dict, sample_result_limsid, pipeline_status)
             else:
                 sample_info_dict[sample_id] = (family_id, pedigree_path, None, sample_result_limsid, pipeline_status)

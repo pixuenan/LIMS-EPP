@@ -86,11 +86,11 @@ def group_family(input_dict):
                 family_dict[family_id][3] += [pipeline_status]
 
     # concatenate the info_dict if there are multiple affected individuals
-    for family_id, [[sample_id_list], pedigree_path, affect_status_list] in family_dict.keys():
+    for family_id, [sample_id_list, pedigree_path, affect_status_dict_list, pipeline_status] in family_dict.items():
         affect_dict_list = []
-        for affect_status in affect_status_list:
+        for affect_status in affect_status_dict_list:
             if affect_status is not None:
-                affect_dict_list += affect_status
+                affect_dict_list += [affect_status]
         if len(affect_dict_list) > 1:
             final_dict = dict()
             for key in affect_dict_list[0].keys():
@@ -179,7 +179,7 @@ def check_file(sample_id_list, output_folder):
         score = 0
         for need_file in vcf_file_list + tbi_file_list + bam_file_list + bai_file_list:
             check_result = DNAnexus_command.check_file(need_file)
-            if check_result and check_result == "closed":
+            if check_result:
                 score += 1
         if score < len(sample_id_list) * 4:
             time.sleep(300)
@@ -201,12 +201,13 @@ def process_ini(family_id, local_folder, info_dict, family_output_folder):
     # download the file from LIMS to local
     local_file_path = local_folder + family_id + ".ini"
     DNAnexus_file_path = family_output_folder + family_id + ".ini"
-    if DNAnexus_command.check_file(DNAnexus_file_path) and os.path.exists(local_file_path):
+    DNAnexus_check_result = DNAnexus_command.check_file(DNAnexus_file_path)
+    if DNAnexus_check_result and os.path.exists(local_file_path):
         logger.info("Ini file already existed on DNAnexus at: %s" % family_output_folder)
         logger.info("Ini file already existed on local at: %s" % local_folder)
         return DNAnexus_file_path
 
-    elif not DNAnexus_command.check_file(DNAnexus_file_path):
+    elif not DNAnexus_check_result:
         if not os.path.exists(local_file_path):
             write_ini(local_file_path, info_dict)
         if DNAnexus_command.upload_file(family_output_folder, local_file_path) == 0:
@@ -228,12 +229,13 @@ def process_pedigree(family_id, local_folder, pedigree_path, hostname, username,
     # download the file from LIMS to local
     local_file_path = local_folder + family_id + ".ped"
     DNAnexus_file_path = family_output_folder + family_id + ".ped"
-    if DNAnexus_command.check_file(DNAnexus_file_path) and os.path.exists(local_file_path):
+    DNAnexus_check_result = DNAnexus_command.check_file(DNAnexus_file_path)
+    if DNAnexus_check_result and os.path.exists(local_file_path):
         logger.info("Ped file already existed on DNAnexus at: %s" % family_output_folder)
         logger.info("Ped file already existed on local at: %s" % local_folder)
         return DNAnexus_file_path
 
-    elif not DNAnexus_command.check_file(DNAnexus_file_path):
+    elif not DNAnexus_check_result:
         if not os.path.exists(local_file_path):
             copy_file_from_sftp(hostname, local_file_path, pedigree_path, username, password)
             logger.info("Copying file %s from LIMS server to local folder %s" % (pedigree_path, local_file_path))
@@ -315,7 +317,7 @@ def workflow2(LIMS_api, input_dict, config_json, run_id, pipeline_version, hostn
     sftp_username = None # glsftp
     sftp_password = None # glsftp password
     work_config = read_config(config_json)
-    output_folder = "%s:/SureKids/%s/" % (work_config["DNAnexus"]["DNA_OUTPUT_PROJECT"], run_id)
+    output_folder = "%s:/SureKids/%s/" % (work_config["DNA_OUTPUT_PROJECT"], run_id)
     logger.info("Output folder on DNAnexus: %s" % output_folder)
     family_dict = group_family(input_dict)
 
@@ -369,15 +371,10 @@ if __name__=="__main__":
     # tbi_file_list = ["tbi1", "tbi2", "tbi3"]
     # bai_file_list = ["bai1", "bai2", "bai3"]
     # bam_file_list = ["bam1", "bam2", "bam3"]
+    # print form_dx_command(config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list)
     global logger
     logging.basicConfig(level=logging.DEBUG,
                         filename="test.log",
                         format='%(levelname)s:%(asctime)s %(message)s')
     logger = logging.getLogger()
-    # print form_dx_command(config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list)
-    # workflow2(sample_dict, "", config)
-    # LIMS_api = RetrieveLIMS("", "", "")
-    # LIMS_api.initiate_LIMS_api()
-    # input_dict = LIMS_api.get_sample_info(process_limsid)
-    # update_bioinfo_status(LIMS_api, "Test1", "92-91651")
 
