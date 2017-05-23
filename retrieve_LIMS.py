@@ -84,7 +84,7 @@ class RetrieveLIMS(object):
         :param info_list: list of udf names needed to be retrieved
         :return: info_dict: {needed_udf: value("" if the udf not exists)}
         '''
-        info_dict = {key: "" for key in info_list}
+        info_dict = dict((key, "") for key in info_list)
         for udf_field in udf_fields:
             udf_name = udf_field.attributes["name"].value
             if udf_name in info_dict.keys():

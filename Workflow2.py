@@ -104,7 +104,7 @@ def form_command_multiple_file(workflow_config, file_list, json_key):
     """Form the part of the command line that may be multiplied by file of family members"""
     command = ""
     for input_file in file_list:
-        command += "%s=%s " % (workflow_config[json_key], input_file)
+        command += "-i%s=%s " % (workflow_config[json_key], input_file)
     command = command.strip()
     return command
 
@@ -126,7 +126,7 @@ def make_local_download_folder(run_id, pipeline_version, family_id):
     '''
     Make the local folder for downloading all result file from DNAnexus and the pedigree file
     '''
-    flowcell = run_id.split("_")[0][1:]
+    flowcell = run_id.split("_")[-1][1:]
     cur_date = date.today().strftime("%Y%m%d")[2:]
     destination_folder = "/mnt/seq/polarisbioit/PolarisPool/LIMS_PRD_Ver_%s_%s_%s/" % (pipeline_version, cur_date, flowcell)
     try:
@@ -139,7 +139,7 @@ def make_local_download_folder(run_id, pipeline_version, family_id):
         return destination_folder
 
 
-def main_dx_command(workflow_config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list, family_output_folder,
+def main_dx_command(workflow_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list, family_output_folder,
                     family_id):
     '''
     Run the main command of workflow2 on DNAnexus
@@ -149,7 +149,7 @@ def main_dx_command(workflow_config, vcf_file_list, tbi_file_list, bai_file_list
     bam_command = form_command_multiple_file(workflow_config, bam_file_list, "DNA_WF2_BAM")
     bai_command = form_command_multiple_file(workflow_config, bai_file_list, "DNA_WF2_BAI")
     ped_file = family_output_folder + family_id + ".ped"
-    command = "dx run %s -i%s -i%s -i%s=%s -y --brief --destination %s -i%s=%s -i%s -i%s -i%s=%s -i%s=%s" \
+    command = "dx run %s %s %s -i%s=%s -y --brief --destination %s -i%s=%s %s %s -i%s=%s -i%s=%s" \
               % (workflow_config["DNA_SK_WORKFLOW"],
                  vcf_command, tbi_command,
                  workflow_config["DNA_WF2_VCF"].split(".")[0] + ".prefix", family_id,
@@ -166,24 +166,22 @@ def check_file(sample_id_list, output_folder):
     Check if all needed files are existed three times
     :return:
     '''
-    vcf_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz" for sample_id in sample_id_list]
-    tbi_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz.tbi" for sample_id in sample_id_list]
-    bam_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.bam" for sample_id in sample_id_list]
-    bai_file_list = [output_folder + "/" + sample_id + "/" + sample_id + ".recalibrated.bam.bai" for sample_id in sample_id_list]
+    vcf_file_list = [output_folder + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz" for sample_id in sample_id_list]
+    tbi_file_list = [output_folder + sample_id + "/" + sample_id + ".recalibrated.g.vcf.gz.tbi" for sample_id in sample_id_list]
+    bam_file_list = [output_folder + sample_id + "/" + sample_id + ".recalibrated.bam" for sample_id in sample_id_list]
+    bai_file_list = [output_folder + sample_id + "/" + sample_id + ".recalibrated.bam.bai" for sample_id in sample_id_list]
     for i in range(3):
-        score_list = []
+        score = 0
         for need_file in vcf_file_list + tbi_file_list + bam_file_list + bai_file_list:
             check_result = DNAnexus_command.check_file(need_file)
             if check_result and check_result == "closed":
-                score_list += 1
-            else:
-                score_list += 0
-        if sum(score_list) < len(sample_id_list) * 4:
+                score += 1
+        if score < len(sample_id_list) * 4:
             time.sleep(300)
         else:
             logger.info("All sample input files for family member %s are exists on DNAnexus" % ",".join(sample_id_list))
             return vcf_file_list, tbi_file_list, bam_file_list, bai_file_list
-    if sum(score_list) < len(sample_id_list) * 4:
+    if score < len(sample_id_list) * 4:
         logger.debug("Not all sample input files for family member %s are exists on DNAnexus" % ",".join(sample_id_list))
         return False
 
@@ -247,8 +245,8 @@ def download_file(output_folder, sample_id_list, family_id, destination_folder):
                             for sample_id in sample_id_list]
     family_need_file_suffix = [".dec.nor.vep_filtered_variants_selected.txt", ".dec.nor.vep_filtered_variants.xlsx",
                                ".dec.nor.vep_filtered_variants_selected.xml",
-                               ".dec.nor.vep.html", "dec.nor.vep.vcf.gz", ".vcf.stats", ".vcf.gz"
-                               ".png", "_gene_summary", "_sample_summary", "dec.nor.vep.vcf.gz"]
+                               ".dec.nor.vep.html", ".dec.nor.vep.vcf.gz", ".vcf.stats", ".vcf.gz"
+                               ".png", "_gene_summary", "_sample_summary", ".dec.nor.vep.vcf.gz"]
     family_need_file = [output_folder + family_id + "/" + family_id + suffix for suffix in family_need_file_suffix]
     if DNAnexus_command.download_batch_file("".join(bwa_stats_file_list + sample_vcf_file_list + family_need_file)) == 0:
         logger.info("Download files from DNAnexus: \n%s" % "\n".join(bwa_stats_file_list + sample_vcf_file_list +
@@ -274,6 +272,7 @@ def workflow2(LIMS_api, input_dict, config_json, run_id, pipeline_version, hostn
     family_dict = group_family(input_dict)
 
     for family_id, [sample_id_list, pedigree_path, affected_dict] in family_dict.items():
+        # check per sample input files from workflow1 and create local and DNAnexus folders, process pedigree and ini files
         logger.info("Check per sample input files for family %s" % family_id)
         need_sample_files = check_file(sample_id_list, output_folder)
         destination_folder = make_local_download_folder(run_id, pipeline_version, family_id)
@@ -282,6 +281,7 @@ def workflow2(LIMS_api, input_dict, config_json, run_id, pipeline_version, hostn
         ini_file = process_ini(family_id, destination_folder, affected_dict, family_output_folder)
 
         if need_sample_files and destination_folder and family_output_folder and pedigree_file and ini_file:
+            # execute dx command for workflow2
             vcf_file_list, tbi_file_list, bam_file_list, bai_file_list = need_sample_files
             command = main_dx_command(work_config, vcf_file_list, tbi_file_list, bam_file_list, bai_file_list, family_output_folder, family_id)
             process = subprocess.Popen(command, shell=True)
@@ -307,17 +307,19 @@ def workflow2(LIMS_api, input_dict, config_json, run_id, pipeline_version, hostn
                 logger.info("Bioinformatics pipeline for family %s finished" % family_id)
 
 if __name__=="__main__":
-    config = read_config("C:\Users\pix1\LIMS\EPP\.idea\SUREKIDS.REFERENCE.CONF.json")
-    vcf_file_list = ["vcf1", "vcf2", "vcf3"]
-    tbi_file_list = ["tbi1", "tbi2", "tbi3"]
-    bai_file_list = ["bai1", "bai2", "bai3"]
-    bam_file_list = ["bam1", "bam2", "bam3"]
+    # vcf_file_list = ["vcf1", "vcf2", "vcf3"]
+    # tbi_file_list = ["tbi1", "tbi2", "tbi3"]
+    # bai_file_list = ["bai1", "bai2", "bai3"]
+    # bam_file_list = ["bam1", "bam2", "bam3"]
+    global logger
+    logging.basicConfig(level=logging.DEBUG,
+                        filename="test.log",
+                        format='%(levelname)s:%(asctime)s %(message)s')
+    logger = logging.getLogger()
     # print form_dx_command(config, vcf_file_list, tbi_file_list, bai_file_list, bam_file_list)
     # workflow2(sample_dict, "", config)
-    LIMS_api = RetrieveLIMS("", "", "")
-    LIMS_api.initiate_LIMS_api()
+    # LIMS_api = RetrieveLIMS("", "", "")
+    # LIMS_api.initiate_LIMS_api()
     # input_dict = LIMS_api.get_sample_info(process_limsid)
-    update_bioinfo_status(LIMS_api, "Test1", "92-91651")
-    logger = logging.basicConfig(level=logging.DEBUG,
-                                 filename="test.log",
-                                 format='%(levelname)s:%(asctime)s %(message)s')
+    # update_bioinfo_status(LIMS_api, "Test1", "92-91651")
+
