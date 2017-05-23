@@ -60,10 +60,20 @@ def upload_file(DNAnexus_folder, local_file_path):
 
 def make_folder(folder_name):
     '''
+    If the folder already existed, dx will return as succeed but in fact nothing happened.
     :param folder_name: full path of the folder on DNAnexus, includes the project istage
     :return: 1: failed, 0: success
     '''
     command = "dx mkdir -p " + folder_name
+    return execute(command)
+
+
+def rm_folder(folder_name):
+    '''
+    :param folder_name: full path of the folder on DNAnexus, includes the project istage
+    :return: 1: failed, 0: success
+    '''
+    command = "dx rm -r " + folder_name
     return execute(command)
 
 
