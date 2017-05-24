@@ -33,8 +33,8 @@ def login(env_source, token):
     return execute(command)
 
 
-def logout():
-    command = "dx logout"
+def dx_exit():
+    command = "dx exit"
     return execute(command)
 
 

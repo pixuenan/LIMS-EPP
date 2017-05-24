@@ -38,8 +38,12 @@ class RetrieveLIMS(object):
 
     def get_dom_from_uri(self, uri):
         xml = self.api.GET(uri)
-        dom = parseString(xml)
-        return dom
+        if not xml:
+            print uri
+            return False
+        else:
+            dom = parseString(xml)
+            return dom
 
     def update_udf(self, uri, udf_name, udf_value):
         dom = self.get_dom_from_uri(uri)
@@ -47,9 +51,47 @@ class RetrieveLIMS(object):
         self.api.PUT(modified_dom.toxml(), uri)
 
     @staticmethod
+    def udf_info_dict(udf_fields, info_list):
+        '''
+        Retrieve UDF info from UDF fields
+        :param udf_fields: list of udf objects
+        :param info_list: list of udf names needed to be retrieved
+        :return: info_dict: {needed_udf: value("" if the udf not exists)}
+        '''
+        info_dict = dict((key, "") for key in info_list)
+        for udf_field in udf_fields:
+            udf_name = udf_field.attributes["name"].value
+            if udf_name in info_dict.keys():
+                info_dict[udf_name] = udf_field.firstChild.nodeValue
+        return info_dict
+
+    def get_file_location(self, file_id):
+        '''
+        Retrieve file locations on LIMS server
+        :return: file location if the file exists or False
+        '''
+        f_dom = self.get_dom_from_id("files", file_id)
+
+        if f_dom:
+            file_loc = f_dom.getElementsByTagName("content-location")[0].firstChild.nodeValue
+            return file_loc
+        else:
+            return False
+
+    def initiate_LIMS_api(self):
+        self.create_api()
+        self.set_base_uri()
+
+
+class SureKidsLIMS(RetrieveLIMS):
+
+    def __init__(self, hostname, username, password):
+        RetrieveLIMS.__init__(self, hostname, username, password)
+
+    @staticmethod
     def get_sample_result_list(p_dom):
         '''
-        Get sample result uri list
+        Get sample result limsid list for all ResultFile
         :param p_dom: DOM of the process
         :return:
         '''
@@ -69,27 +111,6 @@ class RetrieveLIMS(object):
         sample_info_uri = sample_result_dom.getElementsByTagName("sample")[0].attributes["uri"].value
         sample_info_dict = self.get_per_submitted_sample_info(sample_info_dict, sample_info_uri, polaris_sample_id, sample_result_limsid)
         return sample_info_dict
-
-    def get_file_location(self, file_id):
-        f_dom = self.get_dom_from_id("files", file_id)
-
-        file_loc = f_dom.getElementsByTagName("content-location")[0].firstChild.nodeValue
-        return file_loc
-
-    @staticmethod
-    def udf_info_dict(udf_fields, info_list):
-        '''
-        Retrieve UDF info from UDF fields
-        :param udf_fields: list of udf objects
-        :param info_list: list of udf names needed to be retrieved
-        :return: info_dict: {needed_udf: value("" if the udf not exists)}
-        '''
-        info_dict = dict((key, "") for key in info_list)
-        for udf_field in udf_fields:
-            udf_name = udf_field.attributes["name"].value
-            if udf_name in info_dict.keys():
-                info_dict[udf_name] = udf_field.firstChild.nodeValue
-        return info_dict
 
     def get_sample_info(self, process_limsid):
         '''
@@ -111,7 +132,7 @@ class RetrieveLIMS(object):
         :return: dict {sample_id: (family_id, pedigree_path, info_dict/None, sample_result_limsid, pipeline_status),
                        polaris_id."Control": ("Negative Control", sample_result_limsid)}
         '''
-        needed_udf_list = ["Sample External ID", "External Family ID", "Polaris Family ID", "Pedigree Path", "Affected"]
+        needed_udf_list = ["Pt External ID", "External Family ID", "Polaris Family ID", "Pedigree Path", "Affected"]
         info_udf_list = ["Pt Name", "Pt D.O.B", "Pt Gender", "Pt Race", "Pt Hospital", "Pt Dept",
                          "Req Client", "Req Physician",  "Req Pathologist", "Req Test Lab",
                          "Sample Conc. (ng/uL)", "Date Submitted", "Site", "Sample Type"]
@@ -121,15 +142,15 @@ class RetrieveLIMS(object):
             udf_fields = sample_dom.getElementsByTagName("udf:field")
             udf_needed_dict = self.udf_info_dict(udf_fields, needed_udf_list)
             pedigree_path = udf_needed_dict["Pedigree Path"] and self.get_file_location(udf_needed_dict["Pedigree Path"]) or None
-            sample_id = udf_needed_dict["Sample External ID"] + "." + polaris_sample_id
+            sample_id = udf_needed_dict["Pt External ID"] + "." + polaris_sample_id
             family_id = udf_needed_dict["External Family ID"] + "." + udf_needed_dict["Polaris Family ID"]
             pipeline_status = glsapiutil.glsapiutil2.getUDF(self.get_dom_from_id("artifacts", sample_result_limsid), "Status")
 
             if udf_needed_dict["Affected"]:
                 info_dict = self.udf_info_dict(udf_fields, info_udf_list)
-                info_dict["Patient_ID"] = udf_needed_dict["Sample External ID"]
+                info_dict["Patient_ID"] = udf_needed_dict["Pt External ID"]
                 info_dict["Polaris Sample id"] = polaris_sample_id
-                info_dict["Pt External ID"] = udf_needed_dict["Sample External ID"]
+                info_dict["Pt External ID"] = udf_needed_dict["Pt External ID"]
                 sample_info_dict[sample_id] = (family_id, pedigree_path, info_dict, sample_result_limsid, pipeline_status)
             else:
                 sample_info_dict[sample_id] = (family_id, pedigree_path, None, sample_result_limsid, pipeline_status)
@@ -137,10 +158,6 @@ class RetrieveLIMS(object):
         else:
             sample_info_dict[polaris_sample_id+".Control"] = ("Negative Control", sample_result_limsid)
         return sample_info_dict
-
-    def initiate_LIMS_api(self):
-        self.create_api()
-        self.set_base_uri()
 
 
 def remote_exists(sftp, remote_path):
